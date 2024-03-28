@@ -12,6 +12,7 @@ async fn main() {
     tracing_subscriber::fmt::init();
     let middleware = tower::ServiceBuilder::new()
         .layer(TraceLayer::new_for_http())
+        // FIXME: Warp isn't currently designed to handle multiple requests concurrently.
         .layer(ConcurrencyLimitLayer::new(1));
 
     let app = Router::new()
