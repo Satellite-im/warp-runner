@@ -1,11 +1,9 @@
-use axum::{response::IntoResponse, routing::get, Router};
+mod multipass;
+
+use axum::{routing::get, Router};
 use tower::limit::ConcurrencyLimitLayer;
 use tower_http::trace::TraceLayer;
 use tracing::info;
-
-async fn handle() -> impl IntoResponse {
-    "OK"
-}
 
 #[tokio::main]
 async fn main() {
@@ -16,7 +14,7 @@ async fn main() {
         .layer(ConcurrencyLimitLayer::new(1));
 
     let app = Router::new()
-        .route("/api/v1", get(handle))
+        .route("/api/v1/create_identity", get(multipass::create_identity))
         .layer(middleware);
 
     let listener = tokio::net::TcpListener::bind(ADDRESS).await.unwrap();
