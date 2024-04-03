@@ -1,4 +1,7 @@
+mod cli_args;
+mod discovery_mode;
 mod multipass;
+mod warp;
 
 use axum::{routing::get, Router};
 use tower::limit::ConcurrencyLimitLayer;
@@ -12,6 +15,8 @@ async fn main() {
         .layer(TraceLayer::new_for_http())
         // FIXME: Warp isn't currently designed to handle multiple requests concurrently.
         .layer(ConcurrencyLimitLayer::new(1));
+
+    let warp = warp::Warp::init().await.unwrap();
 
     let app = Router::new()
         .route("/api/v1/create_identity", get(multipass::create_identity))
