@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
-use tracing::{trace, warn};
+use tokio::sync::Mutex;
+use tracing::{debug, error, info, trace, warn};
 use warp::{
     blink::Blink,
     constellation::{file::FileType, Constellation},
-    multipass::MultiPass,
+    multipass::{identity::Identity, MultiPass},
     raygun::RayGun,
     tesseract::Tesseract,
 };
@@ -15,13 +16,19 @@ use warp_ipfs::{
 
 use crate::cli_args::STATIC_ARGS;
 
+#[derive(Clone)]
 /// The Warp state.
 pub struct Warp {
-    pub tesseract: Tesseract,
-    pub multipass: Box<dyn MultiPass>,
-    pub raygun: Box<dyn RayGun>,
-    pub constellation: Box<dyn Constellation>,
-    pub blink: Box<dyn Blink>,
+    inner: Arc<WarpInner>,
+}
+
+/// The Warp state.
+pub struct WarpInner {
+    tesseract: Tesseract,
+    multipass: Mutex<Box<dyn MultiPass>>,
+    raygun: Box<dyn RayGun>,
+    constellation: Box<dyn Constellation>,
+    blink: Box<dyn Blink>,
 }
 
 impl Warp {
@@ -69,11 +76,13 @@ impl Warp {
         let blink = warp_blink_wrtc::BlinkImpl::new(multipass.clone()).await?;
 
         Ok(Self {
-            tesseract,
-            multipass,
-            raygun,
-            constellation,
-            blink,
+            inner: Arc::new(WarpInner {
+                tesseract,
+                multipass: Mutex::new(multipass),
+                raygun,
+                constellation,
+                blink,
+            }),
         })
     }
 }
