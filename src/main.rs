@@ -20,6 +20,7 @@ async fn main() {
 
     let app = Router::new()
         .route("/api/v1/create_identity", get(multipass::create_identity))
+        .with_state(warp)
         .layer(middleware);
 
     let listener = tokio::net::TcpListener::bind(ADDRESS).await.unwrap();

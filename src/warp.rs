@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use tokio::sync::Mutex;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, trace, warn};
 use warp::{
     blink::Blink,
     constellation::{file::FileType, Constellation},
@@ -24,11 +24,13 @@ pub struct Warp {
 
 /// The Warp state.
 pub struct WarpInner {
-    tesseract: Tesseract,
+    tesseract: Mutex<Tesseract>,
     multipass: Mutex<Box<dyn MultiPass>>,
-    raygun: Box<dyn RayGun>,
-    constellation: Box<dyn Constellation>,
-    blink: Box<dyn Blink>,
+    raygun: Mutex<Box<dyn RayGun>>,
+    constellation: Mutex<Box<dyn Constellation>>,
+    blink: Mutex<Box<dyn Blink>>,
+
+    config: Config,
 }
 
 impl Warp {
@@ -69,7 +71,7 @@ impl Warp {
 
         let (multipass, raygun, constellation) = WarpIpfsBuilder::default()
             .set_tesseract(tesseract.clone())
-            .set_config(config)
+            .set_config(config.clone())
             .finalize()
             .await?;
 
@@ -77,13 +79,80 @@ impl Warp {
 
         Ok(Self {
             inner: Arc::new(WarpInner {
-                tesseract,
+                tesseract: Mutex::new(tesseract),
                 multipass: Mutex::new(multipass),
-                raygun,
-                constellation,
-                blink,
+                raygun: Mutex::new(raygun),
+                constellation: Mutex::new(constellation),
+                blink: Mutex::new(blink),
+                config,
             }),
         })
+    }
+
+    pub async fn create_identity(
+        &self,
+        username: String,
+        tesseract_passphrase: String,
+        seed_words: String,
+    ) -> Result<Identity, warp::error::Error> {
+        let mut tesseract = self.inner.tesseract.lock().await;
+        if tesseract.exist("keypair") {
+            debug!("attempting to overwrite old account");
+            *tesseract = init_tesseract(true)
+                .await
+                .expect("failed to initialize tesseract");
+            self.reinit(tesseract.clone()).await?;
+        }
+
+        tesseract.unlock(tesseract_passphrase.as_bytes())?;
+        let _id = self
+            .inner
+            .multipass
+            .lock()
+            .await
+            .create_identity(Some(&username), Some(&seed_words))
+            .await
+            .expect("create_identity failed. should never happen");
+        let ident = self.wait_for_multipass().await.map_err(|e| {
+            tesseract.lock();
+
+            e
+        })?;
+
+        Ok(ident)
+    }
+
+    async fn reinit(&self, tesseract: Tesseract) -> Result<(), warp::error::Error> {
+        let inner = &self.inner;
+        let (multipass, raygun, constellation) = WarpIpfsBuilder::default()
+            .set_tesseract(tesseract.clone())
+            .set_config(inner.config.clone())
+            .finalize()
+            .await?;
+        let blink = warp_blink_wrtc::BlinkImpl::new(multipass.clone()).await?;
+
+        *inner.multipass.lock().await = multipass;
+        *inner.raygun.lock().await = raygun;
+        *inner.constellation.lock().await = constellation;
+        *inner.blink.lock().await = blink;
+
+        Ok(())
+    }
+
+    async fn wait_for_multipass(&self) -> Result<Identity, warp::error::Error> {
+        loop {
+            match self.inner.multipass.lock().await.get_own_identity().await {
+                Ok(ident) => return Ok(ident),
+                Err(warp::error::Error::MultiPassExtensionUnavailable) => {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    continue;
+                }
+                Err(e) => {
+                    error!("multipass.get_own_identity failed: {}", e);
+                    return Err(e);
+                }
+            }
+        }
     }
 }
 
